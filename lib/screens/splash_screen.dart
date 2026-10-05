@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../services/settings_service.dart';
 import '../services/favorites_service.dart';
 import 'map_screen.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -39,23 +41,25 @@ class _SplashScreenState extends State<SplashScreen>
     _initializeApp();
   }
 
-  Future<void> _initializeApp() async {
-    // Загружаем настройки и избранное
+    Future<void> _initializeApp() async {
     final settings = context.read<SettingsService>();
     final favorites = context.read<FavoritesService>();
+    final auth = context.read<AuthService>();
 
     await Future.wait([
       settings.load(),
       favorites.load(),
+      auth.load(),
     ]);
 
-    // Минимальная задержка, чтобы splash не мигал слишком быстро
     await Future.delayed(const Duration(milliseconds: 800));
 
     if (mounted) {
       Navigator.of(context).pushReplacement(
         PageRouteBuilder(
-          pageBuilder: (_, __, ___) => const MapScreen(),
+          pageBuilder: (_, __, ___) => auth.isAuthenticated
+              ? const MapScreen()
+              : const AuthScreen(),
           transitionsBuilder: (_, animation, __, child) {
             return FadeTransition(opacity: animation, child: child);
           },
@@ -152,7 +156,7 @@ class _SplashScreenState extends State<SplashScreen>
                     ),
                   ),
                 ),
-
+                  
                 const SizedBox(height: 16),
 
                 Text(

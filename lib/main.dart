@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'services/settings_service.dart';
 import 'services/favorites_service.dart';
+import 'services/auth_service.dart';
 import 'screens/splash_screen.dart';
 
 void main() async {
@@ -19,6 +20,7 @@ class MyApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => SettingsService()),
         ChangeNotifierProvider(create: (_) => FavoritesService()),
+        ChangeNotifierProvider(create: (_) => AuthService()),
       ],
       child: Consumer<SettingsService>(
         builder: (context, settings, _) {

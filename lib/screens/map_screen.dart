@@ -3,13 +3,17 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:provider/provider.dart';
+import 'dart:convert';
 import '../view_models/map_view_model.dart';
 import '../services/route_service.dart';
 import '../services/settings_service.dart';
 import '../services/favorites_service.dart';
 import '../services/place_info_service.dart';
+import '../services/weather_service.dart';
 import '../models/place.dart';
 import '../models/favorite_place.dart';
+import '../services/auth_service.dart';
+import 'auth_screen.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -23,6 +27,7 @@ class _MapScreenState extends State<MapScreen> {
   final TextEditingController _searchController = TextEditingController();
   final PlaceInfoService _placeInfoService = PlaceInfoService();
   MapLibreMapController? _mapController;
+  String? _activeWeatherLayerCode;
 
   Line? _routeLine;
   Symbol? _destinationSymbol;
@@ -58,7 +63,6 @@ class _MapScreenState extends State<MapScreen> {
     if (mounted) setState(() {});
     _updateMapFromViewModel();
 
-    // Показываем SnackBar при перестроении маршрута
     if (_viewModel.justRebuiltRoute) {
       _viewModel.justRebuiltRoute = false;
       if (_viewModel.isNavigationMode && mounted) {
@@ -152,6 +156,96 @@ class _MapScreenState extends State<MapScreen> {
           tilt: 0.0,
         ),
       ));
+    }
+
+        // 5. Погодный слой
+    final settings = context.read<SettingsService>();
+    final weatherService = WeatherService();
+
+    if (settings.weatherEnabled && weatherService.hasApiKey) {
+      final layerCode = settings.weatherLayer;
+
+      if (_activeWeatherLayerCode != layerCode) {
+        // Удаляем старый слой
+        if (_activeWeatherLayerCode != null) {
+          try {
+            await controller.removeLayer('weather_layer');
+            await controller.removeSource('weather_source');
+          } catch (_) {}
+        }
+
+        try {
+          await controller.addSource(
+            'weather_source',
+            RasterSourceProperties(
+              tiles: [weatherService.getTileUrl(WeatherLayer.values.firstWhere(
+                (l) => l.code == layerCode,
+                orElse: () => WeatherLayer.precipitation,
+              ))],
+              tileSize: 256,
+            ),
+          );
+
+          // Добавляем слой ПОВЕРХ всего (без belowLayerId)
+          await controller.addLayer(
+            'weather_layer',
+            'weather_source',
+            RasterLayerProperties(
+              rasterOpacity: 0.6,
+            ),
+          );
+
+          _activeWeatherLayerCode = layerCode;
+          print('=== ПОГОДНЫЙ СЛОЙ ДОБАВЛЕН ПОВЕРХ: $layerCode');
+
+          // Принудительная перерисовка
+          final camera = await controller.queryCameraPosition();
+          if (camera != null) {
+            await controller.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(
+                  target: LatLng(
+                    camera.target.latitude + 0.000001,
+                    camera.target.longitude,
+                  ),
+                  zoom: camera.zoom,
+                  bearing: camera.bearing,
+                  tilt: camera.tilt,
+                ),
+              ),
+              duration: const Duration(milliseconds: 30),
+            );
+            await controller.animateCamera(
+              CameraUpdate.newCameraPosition(camera),
+              duration: const Duration(milliseconds: 30),
+            );
+          }
+        } catch (e) {
+          print('=== ОШИБКА ДОБАВЛЕНИЯ ПОГОДЫ: $e');
+        }
+      }
+    } else {
+      if (_activeWeatherLayerCode != null) {
+        try {
+          await controller.removeLayer('weather_layer');
+          await controller.removeSource('weather_source');
+        } catch (_) {}
+        _activeWeatherLayerCode = null;
+      }
+    }
+
+    // 6. Загрузка погоды (с кэшированием)
+    if (settings.weatherEnabled &&
+        weatherService.hasApiKey &&
+        _viewModel.currentPosition != null) {
+      weatherService.getCurrentWeather(
+        lat: _viewModel.currentPosition!.latitude,
+        lon: _viewModel.currentPosition!.longitude,
+      ).then((weather) {
+        if (weather != null && mounted) {
+          print('=== ПОГОДА: ${weather.temperature}°C, ${weather.description}');
+        }
+      });
     }
   }
 
@@ -433,11 +527,11 @@ class _MapScreenState extends State<MapScreen> {
     if (name == null || name.isEmpty) return;
 
     await context.read<FavoritesService>().add(
-      name: name,
-      address: dest.displayName,
-      lat: dest.location.latitude,
-      lng: dest.location.longitude,
-    );
+          name: name,
+          address: dest.displayName,
+          lat: dest.location.latitude,
+          lng: dest.location.longitude,
+        );
 
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -826,9 +920,9 @@ class _MapScreenState extends State<MapScreen> {
                 !context
                     .read<FavoritesService>()
                     .isFavorite(
-                  vm.selectedDestination!.location.latitude,
-                  vm.selectedDestination!.location.longitude,
-                ))
+                      vm.selectedDestination!.location.latitude,
+                      vm.selectedDestination!.location.longitude,
+                    ))
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: SizedBox(
@@ -869,13 +963,13 @@ class _MapScreenState extends State<MapScreen> {
                       onPressed: vm.isBuildingRoute ? null : vm.buildRoute,
                       icon: vm.isBuildingRoute
                           ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
                           : const Icon(Icons.directions, size: 18),
                       label: Text(
                         vm.currentRoute == null ? 'Построить' : 'Обновить',
@@ -948,7 +1042,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 }
 
-class _MapButton extends StatelessWidget {
+class _MapButton extends StatefulWidget {
   final IconData icon;
   final VoidCallback onPressed;
   final Color? backgroundColor;
@@ -962,22 +1056,56 @@ class _MapButton extends StatelessWidget {
   });
 
   @override
+  State<_MapButton> createState() => _MapButtonState();
+}
+
+class _MapButtonState extends State<_MapButton>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _controller;
+  late Animation<double> _scaleAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      duration: const Duration(milliseconds: 150),
+      vsync: this,
+    );
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 0.9).animate(
+      CurvedAnimation(parent: _controller, curve: Curves.easeInOut),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Material(
-      elevation: 6,
-      shape: const CircleBorder(),
-      color: backgroundColor ?? Theme.of(context).colorScheme.surface,
-      shadowColor: Colors.black.withValues(alpha: 0.3),
-      child: InkWell(
-        onTap: onPressed,
-        customBorder: const CircleBorder(),
-        child: SizedBox(
-          width: 52,
-          height: 52,
-          child: Icon(
-            icon,
-            color: iconColor ?? Theme.of(context).colorScheme.onSurface,
-            size: 26,
+    return ScaleTransition(
+      scale: _scaleAnimation,
+      child: Material(
+        elevation: 6,
+        shape: const CircleBorder(),
+        color: widget.backgroundColor ?? Theme.of(context).colorScheme.surface,
+        shadowColor: Colors.black.withValues(alpha: 0.3),
+        child: InkWell(
+          onTap: () {
+            _controller.forward().then((_) => _controller.reverse());
+            widget.onPressed();
+          },
+          customBorder: const CircleBorder(),
+          child: SizedBox(
+            width: 52,
+            height: 52,
+            child: Icon(
+              widget.icon,
+              color: widget.iconColor ??
+                  Theme.of(context).colorScheme.onSurface,
+              size: 26,
+            ),
           ),
         ),
       ),
@@ -1041,6 +1169,44 @@ class _SettingsPanel extends StatelessWidget {
               },
             ),
 
+            const Divider(height: 32),
+
+            SwitchListTile(
+              title: const Text('Погодные слои'),
+              subtitle: const Text('Показывать погоду на карте'),
+              secondary: Icon(
+                settings.weatherEnabled ? Icons.cloud : Icons.cloud_off,
+              ),
+              value: settings.weatherEnabled,
+              onChanged: (value) {
+                settings.setWeatherEnabled(value);
+              },
+            ),
+
+            if (settings.weatherEnabled) ...[
+              const SizedBox(height: 8),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: WeatherLayer.values.map((layer) {
+                    final isSelected = settings.weatherLayer == layer.code;
+                    return ChoiceChip(
+                      label: Text(layer.label),
+                      selected: isSelected,
+                      onSelected: (selected) {
+                        if (selected) {
+                          settings.setWeatherLayer(layer.code);
+                        }
+                      },
+                      selectedColor: Colors.blue.withValues(alpha: 0.2),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+
             if (settings.searchHistory.isNotEmpty) ...[
               const Divider(height: 32),
               Row(
@@ -1073,6 +1239,49 @@ class _SettingsPanel extends StatelessWidget {
                 }).toList(),
               ),
             ],
+            const Divider(height: 32),
+
+            // Кнопка выхода
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text(
+                'Выйти из аккаунта',
+                style: TextStyle(color: Colors.red),
+              ),
+              subtitle: Text(
+                context.read<AuthService>().currentUserEmail ?? '',
+                style: const TextStyle(fontSize: 12),
+              ),
+              onTap: () async {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (context) => AlertDialog(
+                    title: const Text('Выйти?'),
+                    content: const Text('Вы уверены, что хотите выйти из аккаунта?'),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, false),
+                        child: const Text('Отмена'),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(context, true),
+                        child: const Text('Выйти'),
+                      ),
+                    ],
+                  ),
+                );
+
+                if (confirmed == true && context.mounted) {
+                  await context.read<AuthService>().logout();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const AuthScreen()),
+                      (route) => false,
+                    );
+                  }
+                }
+              },
+            ),
 
             const SizedBox(height: 16),
           ],

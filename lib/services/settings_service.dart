@@ -5,14 +5,20 @@ class SettingsService extends ChangeNotifier {
   static const _keyTheme = 'theme_mode';
   static const _keyVoice = 'voice_enabled';
   static const _keyHistory = 'search_history';
+  static const _keyWeatherEnabled = 'weather_enabled';
+  static const _keyWeatherLayer = 'weather_layer';
 
   ThemeMode _themeMode = ThemeMode.light;
   bool _voiceEnabled = true;
   List<String> _searchHistory = [];
+  bool _weatherEnabled = false;
+  String _weatherLayer = 'precipitation_new';
 
   ThemeMode get themeMode => _themeMode;
   bool get voiceEnabled => _voiceEnabled;
   List<String> get searchHistory => List.unmodifiable(_searchHistory);
+  bool get weatherEnabled => _weatherEnabled;
+  String get weatherLayer => _weatherLayer;
 
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
@@ -22,6 +28,8 @@ class SettingsService extends ChangeNotifier {
 
     _voiceEnabled = prefs.getBool(_keyVoice) ?? true;
     _searchHistory = prefs.getStringList(_keyHistory) ?? [];
+    _weatherEnabled = prefs.getBool(_keyWeatherEnabled) ?? false;
+    _weatherLayer = prefs.getString(_keyWeatherLayer) ?? 'precipitation_new';
 
     notifyListeners();
   }
@@ -38,6 +46,20 @@ class SettingsService extends ChangeNotifier {
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(_keyVoice, value);
+  }
+
+  Future<void> setWeatherEnabled(bool value) async {
+    _weatherEnabled = value;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_keyWeatherEnabled, value);
+  }
+
+  Future<void> setWeatherLayer(String layerCode) async {
+    _weatherLayer = layerCode;
+    notifyListeners();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyWeatherLayer, layerCode);
   }
 
   Future<void> addToHistory(String query) async {
