@@ -11,6 +11,7 @@ class UserCreate(BaseModel):
 class UserResponse(BaseModel):
     id: int
     email: str
+    role: str
     created_at: datetime
 
     class Config:
@@ -29,6 +30,11 @@ class PlaceCreate(BaseModel):
     lat: float
     lng: float
     address: Optional[str] = None
+    description: Optional[str] = None      
+    opening_hours: Optional[str] = None    
+    phone: Optional[str] = None            
+    website: Optional[str] = None          
+    category: Optional[str] = None         
 
 class PlaceResponse(BaseModel):
     id: int
@@ -38,6 +44,11 @@ class PlaceResponse(BaseModel):
     lat: float
     lng: float
     address: Optional[str]
+    description: Optional[str]        
+    opening_hours: Optional[str]      
+    phone: Optional[str]              
+    website: Optional[str]            
+    category: Optional[str]           
     created_at: datetime
 
     class Config:

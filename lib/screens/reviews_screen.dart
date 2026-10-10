@@ -1,19 +1,21 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../services/api_client.dart';
 import '../services/reviews_service.dart';
-import 'dart:typed_data';
 
 class ReviewsScreen extends StatefulWidget {
   final int placeId;
   final String placeName;
   final ApiClient api;
+  final ReviewModel? editReview;
 
   const ReviewsScreen({
     super.key,
     required this.placeId,
     required this.placeName,
     required this.api,
+    this.editReview,
   });
 
   @override
@@ -44,11 +46,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
         );
       }
     } finally {
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
-  Future<void> _addReview() async {
+  Future<void> _openReviewEditor() async {
     final result = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
@@ -58,12 +60,11 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
       builder: (context) => _AddReviewSheet(
         service: _service,
         placeId: widget.placeId,
+        existing: widget.editReview,
       ),
     );
 
-    if (result != null) {
-      await _load();
-    }
+    if (result != null) await _load();
   }
 
   @override
@@ -77,12 +78,17 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
               : ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: _reviews.length,
-                  itemBuilder: (context, i) => _buildReviewCard(_reviews[i]),
+                  itemBuilder: (context, i) =>
+                      _buildReviewCard(_reviews[i]),
                 ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: _addReview,
-        icon: const Icon(Icons.rate_review),
-        label: const Text('Оставить отзыв'),
+        onPressed: _openReviewEditor,
+        icon: Icon(widget.editReview == null
+            ? Icons.rate_review
+            : Icons.edit),
+        label: Text(widget.editReview == null
+            ? 'Оставить отзыв'
+            : 'Редактировать'),
       ),
     );
   }
@@ -152,17 +158,6 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
                       width: 100,
                       height: 100,
                       fit: BoxFit.cover,
-                      loadingBuilder: (context, child, progress) {
-                        if (progress == null) return child;
-                        return Container(
-                          width: 100,
-                          height: 100,
-                          color: Colors.grey.shade200,
-                          child: const Center(
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          ),
-                        );
-                      },
                       errorBuilder: (_, __, ___) => Container(
                         width: 100,
                         height: 100,
@@ -204,15 +199,17 @@ class _ReviewsScreenState extends State<ReviewsScreen> {
   }
 }
 
-// ============ ФОРМА ДОБАВЛЕНИЯ ОТЗЫВА ============
+// ============ ФОРМА ============
 
 class _AddReviewSheet extends StatefulWidget {
   final ReviewsService service;
   final int placeId;
+  final ReviewModel? existing;
 
   const _AddReviewSheet({
     required this.service,
     required this.placeId,
+    this.existing,
   });
 
   @override
@@ -220,10 +217,21 @@ class _AddReviewSheet extends StatefulWidget {
 }
 
 class _AddReviewSheetState extends State<_AddReviewSheet> {
-  int _rating = 5;
-  final _commentController = TextEditingController();
+  late int _rating;
+  late final TextEditingController _commentController;
   List<XFile> _photos = [];
+  List<String> _existingPhotoUrls = [];
   bool _submitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _rating = widget.existing?.rating ?? 5;
+    _commentController = TextEditingController(
+      text: widget.existing?.comment ?? '',
+    );
+    _existingPhotoUrls = widget.existing?.photoUrls ?? [];
+  }
 
   @override
   void dispose() {
@@ -239,18 +247,28 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
   Future<void> _submit() async {
     setState(() => _submitting = true);
     try {
-      await widget.service.addReview(
-        placeId: widget.placeId,
-        rating: _rating,
-        comment: _commentController.text.trim().isEmpty
-            ? null
-            : _commentController.text.trim(),
-        photos: _photos,
-      );
-
-      if (mounted) {
-        Navigator.pop(context, {'success': true});
+      if (widget.existing == null) {
+        await widget.service.addReview(
+          placeId: widget.placeId,
+          rating: _rating,
+          comment: _commentController.text.trim().isEmpty
+              ? null
+              : _commentController.text.trim(),
+          photos: _photos,
+        );
+      } else {
+        await widget.service.updateReview(
+          reviewId: widget.existing!.id,
+          rating: _rating,
+          comment: _commentController.text.trim().isEmpty
+              ? null
+              : _commentController.text.trim(),
+          photos: _photos,
+          existingPhotoUrls: _existingPhotoUrls,
+        );
       }
+
+      if (mounted) Navigator.pop(context, {'success': true});
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -258,7 +276,45 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
         );
       }
     } finally {
-      setState(() => _submitting = false);
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _delete() async {
+    if (widget.existing == null) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Удалить отзыв?'),
+        content: const Text('Действие нельзя отменить.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() => _submitting = true);
+    try {
+      await widget.service.deleteReview(widget.existing!.id);
+      if (mounted) Navigator.pop(context, {'deleted': true});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Ошибка: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _submitting = false);
     }
   }
 
@@ -271,121 +327,186 @@ class _AddReviewSheetState extends State<_AddReviewSheet> {
         right: 16,
         top: 16,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Оставить отзыв',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              widget.existing == null
+                  ? 'Оставить отзыв'
+                  : 'Редактировать отзыв',
+              style: const TextStyle(
+                  fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 16),
 
-          // Рейтинг
-          Row(
-            children: List.generate(5, (i) {
-              return IconButton(
-                icon: Icon(
-                  i < _rating ? Icons.star : Icons.star_border,
-                  color: Colors.amber,
-                  size: 32,
+            // Звёзды
+            Row(
+              children: List.generate(5, (i) {
+                return IconButton(
+                  icon: Icon(
+                    i < _rating ? Icons.star : Icons.star_border,
+                    color: Colors.amber,
+                    size: 32,
+                  ),
+                  onPressed: () => setState(() => _rating = i + 1),
+                );
+              }),
+            ),
+            const SizedBox(height: 12),
+
+            // Комментарий
+            TextField(
+              controller: _commentController,
+              maxLines: 3,
+              decoration: InputDecoration(
+                hintText: 'Расскажите о месте...',
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                onPressed: () => setState(() => _rating = i + 1),
-              );
-            }),
-          ),
-          const SizedBox(height: 12),
-
-          // Комментарий
-          TextField(
-            controller: _commentController,
-            maxLines: 3,
-            decoration: InputDecoration(
-              hintText: 'Расскажите о месте...',
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
               ),
             ),
-          ),
-          const SizedBox(height: 12),
+            const SizedBox(height: 12),
 
-          // Фото
-          OutlinedButton.icon(
-            onPressed: _pickPhotos,
-            icon: const Icon(Icons.add_photo_alternate),
-            label: Text('Фото (${_photos.length})'),
-          ),
-          if (_photos.isNotEmpty) ...[
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 80,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _photos.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, i) => Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: FutureBuilder<Uint8List>(
-                        future: _photos[i].readAsBytes(),
-                        builder: (context, snapshot) {
-                          if (!snapshot.hasData) {
-                            return Container(
-                              width: 80,
-                              height: 80,
-                              color: Colors.grey.shade200,
-                            );
-                          }
-                          return Image.memory(
-                            snapshot.data!,
-                            width: 80,
-                            height: 80,
-                            fit: BoxFit.cover,
-                          );
-                        },
+            // Кнопка выбора фото
+            OutlinedButton.icon(
+              onPressed: _pickPhotos,
+              icon: const Icon(Icons.add_photo_alternate),
+              label: Text('Добавить фото (${_photos.length})'),
+            ),
+
+            // Существующие фото (при редактировании)
+            if (widget.existing != null &&
+                _existingPhotoUrls.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('Старые фото:',
+                  style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 80,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _existingPhotoUrls.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: 8),
+                  itemBuilder: (context, i) => ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.network(
+                      '${ApiClient.baseUrl}${_existingPhotoUrls[i]}',
+                      width: 80,
+                      height: 80,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => Container(
+                        width: 80,
+                        height: 80,
+                        color: Colors.grey.shade200,
                       ),
                     ),
-                    Positioned(
-                      top: 0,
-                      right: 0,
-                      child: GestureDetector(
-                        onTap: () => setState(() => _photos.removeAt(i)),
-                        child: Container(
-                          color: Colors.black54,
-                          child: const Icon(
-                            Icons.close,
-                            color: Colors.white,
-                            size: 16,
+                  ),
+                ),
+              ),
+            ],
+
+            // Новые фото
+            if (_photos.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Text('Новые фото:',
+                  style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 4),
+              SizedBox(
+                height: 80,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: _photos.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(width: 8),
+                  itemBuilder: (context, i) => Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: FutureBuilder<Uint8List>(
+                          future: _photos[i].readAsBytes(),
+                          builder: (context, snapshot) {
+                            if (!snapshot.hasData) {
+                              return Container(
+                                width: 80,
+                                height: 80,
+                                color: Colors.grey.shade200,
+                              );
+                            }
+                            return Image.memory(
+                              snapshot.data!,
+                              width: 80,
+                              height: 80,
+                              fit: BoxFit.cover,
+                            );
+                          },
+                        ),
+                      ),
+                      Positioned(
+                        top: 0,
+                        right: 0,
+                        child: GestureDetector(
+                          onTap: () => setState(
+                              () => _photos.removeAt(i)),
+                          child: Container(
+                            color: Colors.black54,
+                            child: const Icon(
+                              Icons.close,
+                              color: Colors.white,
+                              size: 16,
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
-          ],
-          const SizedBox(height: 16),
+            ],
 
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton(
-              onPressed: _submitting ? null : _submit,
-              child: _submitting
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                        color: Colors.white,
-                        strokeWidth: 2,
-                      ),
-                    )
-                  : const Text('Отправить'),
+            const SizedBox(height: 16),
+
+            // Отправить
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _submitting ? null : _submit,
+                child: _submitting
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : Text(widget.existing == null
+                        ? 'Отправить'
+                        : 'Сохранить'),
+              ),
             ),
-          ),
-          const SizedBox(height: 16),
-        ],
+
+            // Удалить (только при редактировании)
+            if (widget.existing != null) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: TextButton.icon(
+                  onPressed: _submitting ? null : _delete,
+                  icon: const Icon(Icons.delete_outline,
+                      color: Colors.red),
+                  label: const Text(
+                    'Удалить отзыв',
+                    style: TextStyle(color: Colors.red),
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 16),
+          ],
+        ),
       ),
     );
   }

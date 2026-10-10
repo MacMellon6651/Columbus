@@ -44,7 +44,7 @@ async def login(
             detail="Неверный email или пароль",
         )
 
-    token = create_access_token({"sub": user.email})
+    token = create_access_token({"sub": user.email, "role": user.role})
     return Token(access_token=token)
 
 @router.get("/me", response_model=UserResponse)

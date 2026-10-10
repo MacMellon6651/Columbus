@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/settings_service.dart';
 import '../services/favorites_service.dart';
-import 'map_screen.dart';
 import '../services/auth_service.dart';
+import 'map_screen.dart';
 import 'auth_screen.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -37,11 +37,10 @@ class _SplashScreenState extends State<SplashScreen>
     );
 
     _controller.forward();
-
     _initializeApp();
   }
 
-    Future<void> _initializeApp() async {
+  Future<void> _initializeApp() async {
     final settings = context.read<SettingsService>();
     final favorites = context.read<FavoritesService>();
     final auth = context.read<AuthService>();
@@ -83,93 +82,105 @@ class _SplashScreenState extends State<SplashScreen>
 
     return Scaffold(
       backgroundColor: bgColor,
-      body: Center(
-        child: FadeTransition(
-          opacity: _fadeAnimation,
-          child: ScaleTransition(
-            scale: _scaleAnimation,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Логотип
-                Container(
-                  width: 120,
-                  height: 120,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                      colors: [
-                        Colors.blue.shade400,
-                        Colors.blue.shade700,
-                      ],
-                    ),
-                    borderRadius: BorderRadius.circular(30),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.blue.withValues(alpha: 0.3),
-                        blurRadius: 20,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
+      body: Stack(
+        children: [
+          // Кнопка закрытия в правом верхнем углу
+          Positioned(
+            top: 40,
+            right: 16,
+            child: IconButton(
+              icon: Icon(Icons.close, color: textColor),
+              tooltip: 'Пропустить',
+              onPressed: () {
+                final auth = context.read<AuthService>();
+                Navigator.of(context).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (_) => auth.isAuthenticated
+                        ? const MapScreen()
+                        : const AuthScreen(),
                   ),
-                  child: const Icon(
-                    Icons.map,
-                    size: 70,
-                    color: Colors.white,
-                  ),
-                ),
-
-                const SizedBox(height: 24),
-
-                // Название приложения
-                Text(
-                  'Карта города',
-                  style: TextStyle(
-                    fontSize: 28,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-
-                const SizedBox(height: 8),
-
-                Text(
-                  'Навигация',
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: textColor.withValues(alpha: 0.6),
-                  ),
-                ),
-
-                const SizedBox(height: 48),
-
-                // Индикатор загрузки
-                SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    valueColor: AlwaysStoppedAnimation<Color>(
-                      Colors.blue.shade600,
-                    ),
-                  ),
-                ),
-                  
-                const SizedBox(height: 16),
-
-                Text(
-                  'Загрузка...',
-                  style: TextStyle(
-                    fontSize: 13,
-                    color: textColor.withValues(alpha: 0.5),
-                  ),
-                ),
-              ],
+                );
+              },
             ),
           ),
-        ),
+          Center(
+            child: FadeTransition(
+              opacity: _fadeAnimation,
+              child: ScaleTransition(
+                scale: _scaleAnimation,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Container(
+                      width: 120,
+                      height: 120,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            Colors.blue.shade400,
+                            Colors.blue.shade700,
+                          ],
+                        ),
+                        borderRadius: BorderRadius.circular(30),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.blue.withValues(alpha: 0.3),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: const Icon(
+                        Icons.map,
+                        size: 70,
+                        color: Colors.white,
+                      ),
+                    ),
+                    const SizedBox(height: 24),
+                    Text(
+                      'Карта города',
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                        letterSpacing: 0.5,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Навигация',
+                      style: TextStyle(
+                        fontSize: 14,
+                        color: textColor.withValues(alpha: 0.6),
+                      ),
+                    ),
+                    const SizedBox(height: 48),
+                    SizedBox(
+                      width: 40,
+                      height: 40,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 3,
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          Colors.blue.shade600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Загрузка...',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: textColor.withValues(alpha: 0.5),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

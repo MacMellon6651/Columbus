@@ -1,5 +1,3 @@
-import 'dart:io';
-import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:image_picker/image_picker.dart';
 import 'api_client.dart';
 
@@ -49,13 +47,13 @@ class ReviewsService {
     return (data as List).map((j) => ReviewModel.fromJson(j)).toList();
   }
 
+  /// Создаёт новый отзыв.
   Future<ReviewModel> addReview({
     required int placeId,
     required int rating,
     String? comment,
     List<XFile> photos = const [],
   }) async {
-    // 1. Загружаем фото по очереди
     final photoUrls = <String>[];
     for (final photo in photos) {
       final bytes = await photo.readAsBytes();
@@ -63,7 +61,6 @@ class ReviewsService {
       photoUrls.add(url);
     }
 
-    // 2. Отправляем отзыв
     final data = await api.post('/api/places/$placeId/reviews', {
       'rating': rating,
       'comment': comment,
@@ -71,6 +68,40 @@ class ReviewsService {
     });
 
     return ReviewModel.fromJson(data);
+  }
+
+  /// Обновляет существующий отзыв.
+  /// Если photos пустой — старые фото сохраняются.
+  Future<ReviewModel> updateReview({
+    required int reviewId,
+    required int rating,
+    String? comment,
+    List<XFile> photos = const [],
+    List<String> existingPhotoUrls = const [],
+  }) async {
+    final newPhotoUrls = <String>[];
+    for (final photo in photos) {
+      final bytes = await photo.readAsBytes();
+      final url = await api.uploadImage(photo.path, bytes, photo.name);
+      newPhotoUrls.add(url);
+    }
+
+    final finalUrls = newPhotoUrls.isNotEmpty
+        ? [...existingPhotoUrls, ...newPhotoUrls]
+        : existingPhotoUrls;
+
+    final data = await api.patch('/api/reviews/$reviewId', {
+      'rating': rating,
+      'comment': comment,
+      'photo_urls': finalUrls,
+    });
+
+    return ReviewModel.fromJson(data);
+  }
+
+  /// Удаляет отзыв.
+  Future<void> deleteReview(int reviewId) async {
+    await api.delete('/api/reviews/$reviewId');
   }
 
   Future<List<XFile>> pickPhotos() async {

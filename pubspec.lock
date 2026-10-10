@@ -472,6 +472,14 @@ packages:
       url: "https://pub.dev"
     source: hosted
     version: "4.12.0"
+  jsonwebtoken_decode:
+    dependency: "direct main"
+    description:
+      name: jsonwebtoken_decode
+      sha256: "55f317ebced8751c7738a18a5b3b9d58339620b95d8cac77b00226d181c0eeaf"
+      url: "https://pub.dev"
+    source: hosted
+    version: "1.1.2"
   latlong2:
     dependency: "direct main"
     description:
@@ -569,13 +577,13 @@ packages:
     source: hosted
     version: "1.18.3"
   mime:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: mime
-      sha256: bd47de35f07e27267e69c8c8b22edf9473bfee170a60d60fcc93730c5144b7f6
+      sha256: "801fd0b26f14a4a58ccb09d5892c3fbdeff209594300a542492cf13fba9d247a"
       url: "https://pub.dev"
     source: hosted
-    version: "2.1.0"
+    version: "1.0.6"
   nested:
     dependency: transitive
     description:

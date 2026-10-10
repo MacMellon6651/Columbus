@@ -10,6 +10,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
+    role = Column(String(20), nullable=False, server_default='user')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     reviews = relationship("Review", back_populates="user")
@@ -24,6 +25,11 @@ class Place(Base):
     lat = Column(Float, nullable=False)
     lng = Column(Float, nullable=False)
     address = Column(Text, nullable=True)
+    description = Column(Text, nullable=True)           
+    opening_hours = Column(String(100), nullable=True)  
+    phone = Column(String(30), nullable=True)          
+    website = Column(String(255), nullable=True)       
+    category = Column(String(50), nullable=True)       
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
     reviews = relationship("Review", back_populates="place", cascade="all, delete-orphan")

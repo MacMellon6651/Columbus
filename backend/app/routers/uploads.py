@@ -12,6 +12,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 MAX_SIZE = 10 * 1024 * 1024  # 10 MB
 
+
 @router.post("")
 async def upload_image(
     file: UploadFile = File(...),

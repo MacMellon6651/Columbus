@@ -6,28 +6,21 @@ import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http_parser/http_parser.dart';
 import 'package:mime/mime.dart';
 
-
 class ApiClient {
-    static String get baseUrl {
+  static String get baseUrl {
     if (kIsWeb) {
-      // Web (Chrome, Edge, Safari)
       return 'http://localhost:8000';
     }
-    
-    // Android
     if (Platform.isAndroid) {
-      // Для эмулятора — 10.0.2.2
-      // Для реального устройства — IP компа (например, 192.168.1.100)
       return 'http://10.0.2.2:8000';
     }
-    
-    // iOS / macOS / Linux / Windows
     return 'http://localhost:8000';
   }
 
   static const String _tokenKey = 'auth_token';
 
   String? _token;
+  String? get token => _token;
 
   Future<void> loadToken() async {
     final prefs = await SharedPreferences.getInstance();
@@ -70,7 +63,6 @@ class ApiClient {
     return headers;
   }
 
-  /// POST с JSON-телом (для регистрации, мест, отзывов)
   Future<Map<String, dynamic>> post(
     String path,
     Map<String, dynamic> body,
@@ -92,7 +84,42 @@ class ApiClient {
     return jsonDecode(response.body);
   }
 
-  /// POST с form-data (для логина через OAuth2PasswordRequestForm)
+  Future<Map<String, dynamic>> patch(
+    String path,
+    Map<String, dynamic> body,
+  ) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl$path'),
+      headers: _jsonHeaders,
+      body: jsonEncode(body),
+    );
+
+    if (response.statusCode >= 400) {
+      final error = jsonDecode(response.body);
+      throw ApiException(
+        response.statusCode,
+        error['detail'] ?? 'Ошибка сервера',
+      );
+    }
+
+    return jsonDecode(response.body);
+  }
+
+  Future<void> delete(String path) async {
+    final response = await http.delete(
+      Uri.parse('$baseUrl$path'),
+      headers: _jsonHeaders,
+    );
+
+    if (response.statusCode >= 400) {
+      final error = jsonDecode(response.body);
+      throw ApiException(
+        response.statusCode,
+        error['detail'] ?? 'Ошибка сервера',
+      );
+    }
+  }
+
   Future<Map<String, dynamic>> postForm(
     String path,
     Map<String, String> body,
@@ -114,7 +141,6 @@ class ApiClient {
     return jsonDecode(response.body);
   }
 
-  /// GET-запрос
   Future<dynamic> get(String path) async {
     final response = await http.get(
       Uri.parse('$baseUrl$path'),
@@ -132,7 +158,7 @@ class ApiClient {
     return jsonDecode(response.body);
   }
 
-    Future<String> uploadImage(
+  Future<String> uploadImage(
     String path,
     List<int> bytes,
     String filename,

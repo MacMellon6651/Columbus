@@ -4,17 +4,18 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:latlong2/latlong.dart' as ll;
 import 'package:provider/provider.dart';
 import 'package:pointer_interceptor/pointer_interceptor.dart';
-import 'dart:convert';
 import '../view_models/map_view_model.dart';
 import '../services/route_service.dart';
 import '../services/settings_service.dart';
 import '../services/favorites_service.dart';
-import '../services/place_info_service.dart';
 import '../services/weather_service.dart';
+import '../services/places_service.dart';
 import '../models/place.dart';
 import '../models/favorite_place.dart';
 import '../services/auth_service.dart';
 import 'auth_screen.dart';
+import 'add_place_screen.dart';
+import '../widgets/place_details_panel.dart';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -26,12 +27,21 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapViewModel _viewModel = MapViewModel();
   final TextEditingController _searchController = TextEditingController();
-  final PlaceInfoService _placeInfoService = PlaceInfoService();
   MapLibreMapController? _mapController;
   String? _activeWeatherLayerCode;
 
   Line? _routeLine;
   Symbol? _destinationSymbol;
+
+  // Маркеры добавленных мест
+  final List<Symbol> _placeMarkers = [];
+
+  // Кэш загруженных мест (для поиска ближайшего при тапе)
+  List<Map<String, dynamic>> _cachedPlaces = [];
+
+  // ID выбранного места (для боковой панели)
+  int? _selectedPlaceId;
+
 
   @override
   void initState() {
@@ -46,6 +56,7 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
+   // _symbolTapSub?.cancel();
     context.read<SettingsService>().removeListener(_onSettingsChanged);
     _viewModel.removeListener(_onViewModelChanged);
     _viewModel.dispose();
@@ -119,7 +130,7 @@ class _MapScreenState extends State<MapScreen> {
           _viewModel.selectedDestination!.location.longitude,
         ),
         iconImage: 'destination-marker',
-        iconSize: 0.3,
+        iconSize: 0.4,
         iconAnchor: 'bottom',
       ));
     } else {
@@ -196,7 +207,7 @@ class _MapScreenState extends State<MapScreen> {
           );
 
           _activeWeatherLayerCode = layerCode;
-          print('=== ПОГОДНЫЙ СЛОЙ ДОБАВЛЕН ПОВЕРХ: $layerCode');
+          debugPrint('=== ПОГОДНЫЙ СЛОЙ ДОБАВЛЕН ПОВЕРХ: $layerCode');
 
           final camera = await controller.queryCameraPosition();
           if (camera != null) {
@@ -220,7 +231,7 @@ class _MapScreenState extends State<MapScreen> {
             );
           }
         } catch (e) {
-          print('=== ОШИБКА ДОБАВЛЕНИЯ ПОГОДЫ: $e');
+          debugPrint('=== ОШИБКА ДОБАВЛЕНИЯ ПОГОДЫ: $e');
         }
       }
     } else {
@@ -242,7 +253,8 @@ class _MapScreenState extends State<MapScreen> {
         lon: _viewModel.currentPosition!.longitude,
       ).then((weather) {
         if (weather != null && mounted) {
-          print('=== ПОГОДА: ${weather.temperature}°C, ${weather.description}');
+          debugPrint(
+              '=== ПОГОДА: ${weather.temperature}°C, ${weather.description}');
         }
       });
     }
@@ -252,20 +264,50 @@ class _MapScreenState extends State<MapScreen> {
 
   void _onMapCreated(MapLibreMapController controller) {
     _mapController = controller;
+    controller.onSymbolTapped.add(_onSymbolTapped);
   }
 
   Future<void> _onStyleLoaded() async {
+    // Загружаем иконку маркера назначения
     try {
       final bytes = await rootBundle.load('assets/marker.png');
       await _mapController?.addImage(
         'destination-marker',
         bytes.buffer.asUint8List(),
       );
-      print('=== ИКОНКА МАРКЕРА ЗАГРУЖЕНА');
+      debugPrint('=== ИКОНКА МАРКЕРА ЗАГРУЖЕНА');
     } catch (e) {
-      print('=== ОШИБКА ЗАГРУЗКИ ИКОНКИ: $e');
+      debugPrint('=== ОШИБКА ЗАГРУЗКИ ИКОНКИ: $e');
     }
 
+    // Загружаем иконки категорий
+    final iconNames = [
+      'cafe',
+      'shop',
+      'restaurant',
+      'pharmacy',
+      'park',
+      'hospital',
+      'university',
+    ];
+
+    for (final name in iconNames) {
+      try {
+        final bytes = await rootBundle.load('assets/icons/$name.png');
+        await _mapController?.addImage(
+          'icon_$name',
+          bytes.buffer.asUint8List(),
+        );
+        debugPrint('=== ИКОНКА $name ЗАГРУЖЕНА');
+      } catch (e) {
+        debugPrint('=== ИКОНКА $name НЕ ЗАГРУЖЕНА: $e');
+      }
+    }
+
+    // Загружаем места из БД
+    await _loadPlacesFromDb();
+
+    // Центрируем камеру
     final pos = _viewModel.currentPosition;
     if (pos != null && pos.latitude.abs() > 0.1) {
       _mapController?.animateCamera(CameraUpdate.newLatLngZoom(
@@ -280,6 +322,150 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // ============ ЗАГРУЗКА МЕСТ ИЗ БД ============
+
+  Future<void> _loadPlacesFromDb() async {
+    final controller = _mapController;
+    if (controller == null) return;
+
+    try {
+      final auth = context.read<AuthService>();
+      final placesService = PlacesService(auth.api);
+
+      final places = await placesService.getAllPlaces();
+      debugPrint('=== ЗАГРУЖЕНО МЕСТ ИЗ БД: ${places.length}');
+
+      // Кэшируем список для поиска ближайшего при тапе
+      _cachedPlaces = places;
+
+      for (final place in places) {
+        final lat = (place['lat'] as num).toDouble();
+        final lng = (place['lng'] as num).toDouble();
+        final name = place['name'] as String? ?? 'Без названия';
+        final category = place['category'] as String?;
+
+        await _addPlaceMarker(
+          LatLng(lat, lng),
+          name,
+          category,
+        );
+      }
+    } catch (e) {
+      debugPrint('=== ОШИБКА ЗАГРУЗКИ МЕСТ: $e');
+    }
+  }
+
+  // ============ ТАП ПО КАРТЕ (пустое место) ============
+
+  Future<void> _onMapClick(dynamic point, LatLng coordinates) async {
+    debugPrint(
+        '=== ТАП ПО КАРТЕ: ${coordinates.latitude}, ${coordinates.longitude}');
+
+    if (_cachedPlaces.isEmpty) {
+      debugPrint('=== КЭШ ПУСТ');
+      return;
+    }
+
+    Map<String, dynamic>? nearest;
+    double nearestDistance = double.infinity;
+
+    for (final place in _cachedPlaces) {
+      final lat = (place['lat'] as num).toDouble();
+      final lng = (place['lng'] as num).toDouble();
+
+      final distance = _distanceBetween(
+        coordinates.latitude,
+        coordinates.longitude,
+        lat,
+        lng,
+      );
+
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearest = place;
+      }
+    }
+
+    if (nearest == null || nearestDistance > 30.0) {
+      debugPrint('=== БЛИЖАЙШЕЕ МЕСТО ДАЛЕКО: ${nearestDistance.round()} м');
+      return;
+    }
+
+    final rawId = nearest['id'];
+    final id = rawId is int ? rawId : int.tryParse(rawId.toString());
+    if (id == null) {
+      debugPrint('=== ID НЕ ПОЛУЧЕН: rawId=$rawId');
+      return;
+    }
+
+    debugPrint('=== ОТКРЫВАЮ ПАНЕЛЬ: ${nearest['name']} (id=$id)');
+    setState(() => _selectedPlaceId = id);
+  }
+
+  // ============ ТАП ПО МАРКЕРУ (Symbol) ============
+
+  void _onSymbolTapped(Symbol symbol) {
+    final coords = symbol.options.geometry;
+    debugPrint('=== SYMBOL TAPPED: $coords');
+    if (coords == null) return;
+
+    if (_cachedPlaces.isEmpty) return;
+
+    Map<String, dynamic>? nearest;
+    double nearestDistance = double.infinity;
+
+    for (final place in _cachedPlaces) {
+      final lat = (place['lat'] as num).toDouble();
+      final lng = (place['lng'] as num).toDouble();
+      final d = _distanceBetween(
+        coords.latitude,
+        coords.longitude,
+        lat,
+        lng,
+      );
+      if (d < nearestDistance) {
+        nearestDistance = d;
+        nearest = place;
+      }
+    }
+
+    if (nearest == null || nearestDistance > 5.0) {
+      debugPrint(
+          '=== СИМВОЛ БЕЗ МЕСТА В БД (dist=${nearestDistance.round()}м)');
+      return;
+    }
+
+    final rawId = nearest['id'];
+    final id = rawId is int ? rawId : int.tryParse(rawId.toString());
+    if (id == null) {
+      debugPrint('=== ID НЕ ПОЛУЧЕН: rawId=$rawId');
+      return;
+    }
+
+    debugPrint('=== SYMBOL TAP → ПАНЕЛЬ: ${nearest['name']} (id=$id)');
+    setState(() => _selectedPlaceId = id);
+  }
+
+  double _distanceBetween(
+    double lat1,
+    double lon1,
+    double lat2,
+    double lon2,
+  ) {
+    const earthRadius = 6371000.0;
+    const deg2rad = 3.141592653589793 / 180.0;
+    final dLat = (lat2 - lat1) * deg2rad;
+    final dLon = (lon2 - lon1) * deg2rad;
+
+    final a = (dLat / 2).abs() * (dLat / 2).abs() +
+        (lat1 * deg2rad).abs() *
+            (lat2 * deg2rad).abs() *
+            (dLon / 2).abs() *
+            (dLon / 2).abs();
+
+    return earthRadius * 2 * a;
+  }
+
   void _zoomIn() => _mapController?.animateCamera(CameraUpdate.zoomIn());
   void _zoomOut() => _mapController?.animateCamera(CameraUpdate.zoomOut());
 
@@ -292,166 +478,60 @@ class _MapScreenState extends State<MapScreen> {
     ));
   }
 
-  // ============ ТАП ПО КАРТЕ ============
+  // ============ ДОБАВЛЕНИЕ МЕСТА НА КАРТУ ============
 
-  Future<void> _onMapTap(dynamic point, LatLng coordinates) async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(
-        child: CircularProgressIndicator(),
-      ),
-    );
+  Future<void> _addPlaceMarker(
+      LatLng coordinates, String name, String? category) async {
+    final controller = _mapController;
+    if (controller == null) return;
 
-    final info = await _placeInfoService.getInfoAt(
-      ll.LatLng(coordinates.latitude, coordinates.longitude),
-    );
-
-    if (mounted) Navigator.pop(context);
-
-    if (mounted) {
-      _showPlaceInfoBottomSheet(info, coordinates);
+    // Выбираем иконку по категории
+    String iconName = 'destination-marker';
+    if (category != null) {
+      final lower = category.toLowerCase();
+      if (lower.contains('кафе') || lower.contains('cafe')) {
+        iconName = 'icon_cafe';
+      } else if (lower.contains('магазин') || lower.contains('shop')) {
+        iconName = 'icon_shop';
+      } else if (lower.contains('ресторан') || lower.contains('restaurant')) {
+        iconName = 'icon_restaurant';
+      } else if (lower.contains('аптека') || lower.contains('pharmacy')) {
+        iconName = 'icon_pharmacy';
+      } else if (lower.contains('парк') || lower.contains('park')) {
+        iconName = 'icon_park';
+      } else if (lower.contains('больница') || lower.contains('hospital')) {
+        iconName = 'icon_hospital';
+      } else if (lower.contains('университет') ||
+          lower.contains('university')) {
+        iconName = 'icon_university';
+      }
     }
-  }
 
-  void _showPlaceInfoBottomSheet(PlaceInfo info, LatLng coords) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) => PointerInterceptor(
-        child: SafeArea(
-          child: Container(
-            padding: const EdgeInsets.all(20),
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(context).size.height * 0.7,
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    const Icon(Icons.location_on, color: Colors.blue, size: 28),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        info.address,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-
-                Text(
-                  '${coords.latitude.toStringAsFixed(5)}, ${coords.longitude.toStringAsFixed(5)}',
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                ),
-
-                const SizedBox(height: 16),
-                const Divider(),
-                const SizedBox(height: 8),
-
-                if (info.pois.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 24),
-                    child: Center(
-                      child: Column(
-                        children: [
-                          Icon(
-                            Icons.search_off,
-                            size: 48,
-                            color: Colors.grey.shade400,
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Заведений рядом не найдено',
-                            style: TextStyle(color: Colors.grey.shade600),
-                          ),
-                        ],
-                      ),
-                    ),
-                  )
-                else ...[
-                  Text(
-                    'Заведения рядом (${info.pois.length})',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Flexible(
-                    child: Material(
-                      color: Colors.transparent,
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: info.pois.length,
-                        itemBuilder: (context, index) {
-                          final poi = info.pois[index];
-                          return ListTile(
-                            leading: Container(
-                              width: 40,
-                              height: 40,
-                              decoration: BoxDecoration(
-                                color: Colors.blue.withValues(alpha: 0.1),
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(
-                                Icons.place,
-                                color: Colors.blue,
-                                size: 20,
-                              ),
-                            ),
-                            title: Text(poi.name),
-                            subtitle: Text(
-                              poi.type,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            onTap: () {
-                              Navigator.pop(context);
-                              _buildRouteToPoi(poi);
-                            },
-                          );
-                        },
-                      ),
-                    ),
-                  ),
-                ],
-
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
+    try {
+      final marker = await controller.addSymbol(
+        SymbolOptions(
+          geometry: coordinates,
+          iconImage: iconName,
+          iconSize: 0.4,
+          iconAnchor: 'bottom',
+          textField: name,
+          textSize: 12,
+          textColor: '#000000',
+          textHaloColor: '#FFFFFF',
+          textHaloWidth: 2,
+          textOffset: const Offset(0, 1.5),
+          textAnchor: 'top',
         ),
-      ),
-    );
-  }
+      );
 
-  void _buildRouteToPoi(PoiItem poi) {
-    final place = Place(
-      displayName: poi.name,
-      location: ll.LatLng(poi.lat, poi.lng),
-    );
+      setState(() {
+        _placeMarkers.add(marker);
+      });
 
-    _viewModel.selectPlace(place);
-    _searchController.text = poi.name;
-
-    _mapController?.animateCamera(CameraUpdate.newLatLngZoom(
-      LatLng(poi.lat, poi.lng),
-      18.0,
-    ));
-
-    _viewModel.buildRoute();
+      debugPrint('=== МАРКЕР ДОБАВЛЕН: $name');
+    } catch (e) {
+      debugPrint('=== ОШИБКА ДОБАВЛЕНИЯ МАРКЕРА: $e');
+    }
   }
 
   // ============ ПОИСК ============
@@ -480,8 +560,31 @@ class _MapScreenState extends State<MapScreen> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (context) => PointerInterceptor(
-        child: const _SettingsPanel(),
+      builder: (bottomSheetContext) => PointerInterceptor(
+        child: _SettingsPanel(
+          onPlaceAdded: (placeData) async {
+            await _addPlaceMarker(
+              LatLng(placeData['lat'], placeData['lng']),
+              placeData['name'],
+              placeData['category'],
+            );
+
+            _mapController?.animateCamera(
+              CameraUpdate.newLatLngZoom(
+                LatLng(placeData['lat'], placeData['lng']),
+                16.0,
+              ),
+            );
+
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                    content:
+                        Text('Место "${placeData['name']}" добавлено!')),
+              );
+            }
+          },
+        ),
       ),
     );
   }
@@ -578,7 +681,10 @@ class _MapScreenState extends State<MapScreen> {
           MapLibreMap(
             onMapCreated: _onMapCreated,
             onStyleLoadedCallback: _onStyleLoaded,
-            onMapClick: _onMapTap,
+            onMapClick: _onMapClick,
+            // onSymbolTapped: _onSymbolTapped,  // ← в maplibre_gl 0.27.1
+            //                                     такого параметра у виджета НЕТ,
+            //                                     подписка идёт через controller.onSymbolTapped
             initialCameraPosition: CameraPosition(
               target: LatLng(
                 vm.currentPosition?.latitude ?? 53.3532,
@@ -687,6 +793,24 @@ class _MapScreenState extends State<MapScreen> {
               bottom: 16,
               child: PointerInterceptor(
                 child: _buildRoutePanel(),
+              ),
+            ),
+
+          // Боковая панель места
+          if (_selectedPlaceId != null)
+            Positioned(
+              top: 0,
+              right: 0,
+              bottom: 0,
+              child: PointerInterceptor(
+                child: PlaceDetailsPanel(
+                  key: ValueKey(_selectedPlaceId),
+                  placeId: _selectedPlaceId!,
+                  api: context.read<AuthService>().api,
+                  onClose: () {
+                    setState(() => _selectedPlaceId = null);
+                  },
+                ),
               ),
             ),
         ],
@@ -1145,11 +1269,14 @@ class _MapButtonState extends State<_MapButton>
 // ============ ПАНЕЛЬ НАСТРОЕК ============
 
 class _SettingsPanel extends StatelessWidget {
-  const _SettingsPanel();
+  final void Function(Map<String, dynamic> placeData) onPlaceAdded;
+
+  const _SettingsPanel({required this.onPlaceAdded});
 
   @override
   Widget build(BuildContext context) {
     final settings = context.watch<SettingsService>();
+    final auth = context.watch<AuthService>();
 
     return SafeArea(
       child: Container(
@@ -1269,6 +1396,30 @@ class _SettingsPanel extends StatelessWidget {
               ),
             ],
 
+            // Кнопка добавления места (только для модераторов)
+            if (auth.isModerator) ...[
+              const Divider(height: 32),
+              ListTile(
+                leading: const Icon(Icons.add_location, color: Colors.green),
+                title: const Text('Добавить место'),
+                subtitle: const Text('Только для модераторов'),
+                onTap: () async {
+                  Navigator.pop(context);
+
+                  final result = await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AddPlaceScreen(),
+                    ),
+                  );
+
+                  if (result != null && result['success'] == true) {
+                    onPlaceAdded(result);
+                  }
+                },
+              ),
+            ],
+
             const Divider(height: 32),
 
             ListTile(
@@ -1278,7 +1429,7 @@ class _SettingsPanel extends StatelessWidget {
                 style: TextStyle(color: Colors.red),
               ),
               subtitle: Text(
-                context.read<AuthService>().currentUserEmail ?? '',
+                auth.currentUserEmail ?? '',
                 style: const TextStyle(fontSize: 12),
               ),
               onTap: () async {
@@ -1286,7 +1437,8 @@ class _SettingsPanel extends StatelessWidget {
                   context: context,
                   builder: (context) => AlertDialog(
                     title: const Text('Выйти?'),
-                    content: const Text('Вы уверены, что хотите выйти из аккаунта?'),
+                    content: const Text(
+                        'Вы уверены, что хотите выйти из аккаунта?'),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(context, false),
