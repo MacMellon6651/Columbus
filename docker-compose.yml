@@ -23,7 +23,7 @@ services:
     container_name: columbus_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "8003:8000"
     environment:
       DATABASE_URL: postgresql+asyncpg://columbus_user:columbus_password@postgres:5432/columbus_db
       SECRET_KEY: "09d25e094faa256c818166b7a956b93f7099f6f0f4caa6cf63b88e8d3e7"

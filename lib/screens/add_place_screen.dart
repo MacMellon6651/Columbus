@@ -61,7 +61,6 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
   Future<void> _fetchAddress(LatLng coords) async {
     setState(() => _isFetchingAddress = true);
     try {
-      // Конвертируем maplibre_gl.LatLng → latlong2.LatLng
       final llCoords = ll.LatLng(coords.latitude, coords.longitude);
       final info = await _placeInfoService.getInfoAt(llCoords);
       if (mounted && info.address.isNotEmpty) {
@@ -150,7 +149,6 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
     final placesService = PlacesService(auth.api);
 
     try {
-      // 1. Создаём/находим место
       final placeId = await placesService.findOrCreatePlace(
         name: _nameController.text.trim(),
         lat: _selectedLocation!.latitude,
@@ -163,7 +161,6 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
         category: _selectedCategory,
       );
 
-      // 2. Загружаем картинки
       if (_images.isNotEmpty) {
         final urls = <String>[];
         for (final img in _images) {
@@ -201,7 +198,7 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
 
   // ============ UI ============
 
-  @override
+    @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
@@ -212,214 +209,191 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
       ),
       body: Column(
         children: [
-          // Компактная карта
+          // ===== Карта — на всю ширину =====
           Expanded(
-            flex: 35,
-            child: Stack(
-              children: [
-                MapLibreMap(
-                  onMapCreated: (c) => _mapController = c,
-                  onStyleLoadedCallback: _onStyleLoaded,
-                  onMapClick: _onMapTap,
-                  initialCameraPosition: const CameraPosition(
-                    target: LatLng(53.3532, 83.7737),
-                    zoom: 14.0,
-                  ),
-                  styleString: 'https://tiles.openfreemap.org/styles/liberty',
+            flex: 45,
+            child: ClipRRect(
+              borderRadius: const BorderRadius.vertical(
+                bottom: Radius.circular(20),
+              ),
+              child: MapLibreMap(
+                onMapCreated: (c) => _mapController = c,
+                onStyleLoadedCallback: _onStyleLoaded,
+                onMapClick: _onMapTap,
+                initialCameraPosition: const CameraPosition(
+                  target: LatLng(53.3532, 83.7737),
+                  zoom: 14.0,
                 ),
-                Positioned(
-                  top: 12,
-                  left: 12,
-                  right: 12,
-                  child: PointerInterceptor(
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: const Row(
-                        children: [
-                          Icon(Icons.touch_app, color: Colors.white, size: 18),
-                          SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'Тапните по карте — адрес подтянется сам',
-                              style: TextStyle(
-                                  color: Colors.white, fontSize: 12),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+                styleString: 'https://tiles.openfreemap.org/styles/liberty',
+              ),
             ),
           ),
 
-          // Форма
+          // ===== Форма — узкая колонка по центру =====
           Expanded(
-            flex: 65,
-            child: Container(
-              decoration: BoxDecoration(
-                color: theme.colorScheme.surface,
-                borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(24),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.1),
-                    blurRadius: 20,
-                    offset: const Offset(0, -5),
+            flex: 55,
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 560),
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: theme.colorScheme.surface,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(24),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.1),
+                        blurRadius: 20,
+                        offset: const Offset(0, -5),
+                      ),
+                    ],
                   ),
-                ],
-              ),
-              child: Form(
-                key: _formKey,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
-                  children: [
-                    if (_selectedLocation != null)
-                      _buildStatusChip(
-                        color: Colors.green,
-                        icon: Icons.check_circle,
-                        text:
-                            '${_selectedLocation!.latitude.toStringAsFixed(5)}, '
-                            '${_selectedLocation!.longitude.toStringAsFixed(5)}',
-                        title: 'Место выбрано',
-                      )
-                    else
-                      _buildStatusChip(
-                        color: Colors.orange,
-                        icon: Icons.warning_amber,
-                        text: 'Тапните по карте, чтобы выбрать место',
-                        title: null,
-                      ),
+                  child: Form(
+                    key: _formKey,
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 32),
+                      children: [
+                        if (_selectedLocation != null)
+                          _buildStatusChip(
+                            color: Colors.green,
+                            icon: Icons.check_circle,
+                            text:
+                                '${_selectedLocation!.latitude.toStringAsFixed(5)}, '
+                                '${_selectedLocation!.longitude.toStringAsFixed(5)}',
+                            title: 'Место выбрано',
+                          )
+                        else
+                          _buildStatusChip(
+                            color: Colors.orange,
+                            icon: Icons.warning_amber,
+                            text: 'Тапните по карте, чтобы выбрать место',
+                            title: null,
+                          ),
 
-                    const SizedBox(height: 16),
+                        const SizedBox(height: 16),
 
-                    TextFormField(
-                      controller: _nameController,
-                      decoration: _inputDecoration(
-                        label: 'Название *',
-                        hint: 'Кофейня "Утро"',
-                        icon: Icons.store,
-                      ),
-                      validator: (v) => v == null || v.trim().isEmpty
-                          ? 'Введите название'
-                          : null,
-                    ),
-                    const SizedBox(height: 12),
+                        TextFormField(
+                          controller: _nameController,
+                          decoration: _inputDecoration(
+                            label: 'Название *',
+                            hint: 'Кофейня "Утро"',
+                            icon: Icons.store,
+                          ),
+                          validator: (v) => v == null || v.trim().isEmpty
+                              ? 'Введите название'
+                              : null,
+                        ),
+                        const SizedBox(height: 12),
 
-                    DropdownButtonFormField<String>(
-                      value: _selectedCategory,
-                      decoration: _inputDecoration(
-                        label: 'Категория',
-                        icon: Icons.category,
-                      ),
-                      items: _categories
-                          .map((c) =>
-                              DropdownMenuItem(value: c, child: Text(c)))
-                          .toList(),
-                      onChanged: (v) =>
-                          setState(() => _selectedCategory = v),
-                    ),
-                    const SizedBox(height: 12),
+                        DropdownButtonFormField<String>(
+                          value: _selectedCategory,
+                          decoration: _inputDecoration(
+                            label: 'Категория',
+                            icon: Icons.category,
+                          ),
+                          items: _categories
+                              .map((c) =>
+                                  DropdownMenuItem(value: c, child: Text(c)))
+                              .toList(),
+                          onChanged: (v) =>
+                              setState(() => _selectedCategory = v),
+                        ),
+                        const SizedBox(height: 12),
 
-                    TextFormField(
-                      controller: _addressController,
-                      readOnly: true,
-                      decoration: _inputDecoration(
-                        label: 'Адрес',
-                        hint: _isFetchingAddress
-                            ? 'Определяем адрес...'
-                            : 'Подтянется автоматически',
-                        icon: _isFetchingAddress
-                            ? Icons.hourglass_top
-                            : Icons.location_on,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    TextFormField(
-                      controller: _descriptionController,
-                      maxLines: 3,
-                      decoration: _inputDecoration(
-                        label: 'Описание',
-                        hint: 'Уютная кофейня с выпечкой',
-                        icon: Icons.description,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    TextFormField(
-                      controller: _hoursController,
-                      decoration: _inputDecoration(
-                        label: 'Часы работы',
-                        hint: 'Пн-Пт 9:00-18:00',
-                        icon: Icons.access_time,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    TextFormField(
-                      controller: _phoneController,
-                      keyboardType: TextInputType.phone,
-                      decoration: _inputDecoration(
-                        label: 'Телефон',
-                        hint: '+7 (999) 123-45-67',
-                        icon: Icons.phone,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    TextFormField(
-                      controller: _websiteController,
-                      keyboardType: TextInputType.url,
-                      decoration: _inputDecoration(
-                        label: 'Сайт',
-                        hint: 'https://example.com',
-                        icon: Icons.language,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-
-                    _buildImagesSection(theme),
-                    const SizedBox(height: 24),
-
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isLoading ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                        TextFormField(
+                          controller: _addressController,
+                          readOnly: true,
+                          decoration: _inputDecoration(
+                            label: 'Адрес',
+                            hint: _isFetchingAddress
+                                ? 'Определяем адрес...'
+                                : 'Подтянется автоматически',
+                            icon: _isFetchingAddress
+                                ? Icons.hourglass_top
+                                : Icons.location_on,
                           ),
                         ),
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text(
-                                'Добавить место',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: _descriptionController,
+                          maxLines: 3,
+                          decoration: _inputDecoration(
+                            label: 'Описание',
+                            hint: 'Уютная кофейня с выпечкой',
+                            icon: Icons.description,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: _hoursController,
+                          decoration: _inputDecoration(
+                            label: 'Часы работы',
+                            hint: 'Пн-Пт 9:00-18:00',
+                            icon: Icons.access_time,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: _phoneController,
+                          keyboardType: TextInputType.phone,
+                          decoration: _inputDecoration(
+                            label: 'Телефон',
+                            hint: '+7 (999) 123-45-67',
+                            icon: Icons.phone,
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+
+                        TextFormField(
+                          controller: _websiteController,
+                          keyboardType: TextInputType.url,
+                          decoration: _inputDecoration(
+                            label: 'Сайт',
+                            hint: 'https://example.com',
+                            icon: Icons.language,
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+
+                        _buildImagesSection(theme),
+                        const SizedBox(height: 24),
+
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: _isLoading ? null : _submit,
+                            style: ElevatedButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
                               ),
-                      ),
+                            ),
+                            child: _isLoading
+                                ? const SizedBox(
+                                    width: 20,
+                                    height: 20,
+                                    child: CircularProgressIndicator(
+                                      color: Colors.white,
+                                      strokeWidth: 2,
+                                    ),
+                                  )
+                                : const Text(
+                                    'Добавить место',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -434,13 +408,29 @@ class _AddPlaceScreenState extends State<AddPlaceScreen> {
     String? hint,
     IconData? icon,
   }) {
+    final theme = Theme.of(context);
     return InputDecoration(
       labelText: label,
       hintText: hint,
       prefixIcon: icon != null ? Icon(icon) : null,
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
       ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide.none,
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(12),
+        borderSide: BorderSide(
+          color: theme.colorScheme.primary,
+          width: 1.5,
+        ),
+      ),
+      filled: true,
+      fillColor: theme.colorScheme.surfaceContainerHighest
+          .withValues(alpha: 0.4),
       contentPadding:
           const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
     );

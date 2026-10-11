@@ -8,6 +8,7 @@ import '../view_models/map_view_model.dart';
 import '../services/route_service.dart';
 import '../services/settings_service.dart';
 import '../services/favorites_service.dart';
+import '../services/place_info_service.dart';
 import '../services/weather_service.dart';
 import '../services/places_service.dart';
 import '../models/place.dart';
@@ -16,6 +17,7 @@ import '../services/auth_service.dart';
 import 'auth_screen.dart';
 import 'add_place_screen.dart';
 import '../widgets/place_details_panel.dart';
+import 'dart:math';
 
 class MapScreen extends StatefulWidget {
   const MapScreen({super.key});
@@ -27,6 +29,7 @@ class MapScreen extends StatefulWidget {
 class _MapScreenState extends State<MapScreen> {
   final MapViewModel _viewModel = MapViewModel();
   final TextEditingController _searchController = TextEditingController();
+  final PlaceInfoService _placeInfoService = PlaceInfoService();
   MapLibreMapController? _mapController;
   String? _activeWeatherLayerCode;
 
@@ -42,6 +45,8 @@ class _MapScreenState extends State<MapScreen> {
   // ID выбранного места (для боковой панели)
   int? _selectedPlaceId;
 
+  // Флаг: был ли выбран пункт назначения (для очистки строки поиска)
+  bool _wasDestinationSelected = false;
 
   @override
   void initState() {
@@ -56,7 +61,6 @@ class _MapScreenState extends State<MapScreen> {
 
   @override
   void dispose() {
-   // _symbolTapSub?.cancel();
     context.read<SettingsService>().removeListener(_onSettingsChanged);
     _viewModel.removeListener(_onViewModelChanged);
     _viewModel.dispose();
@@ -73,6 +77,15 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   void _onViewModelChanged() {
+    // Реакция на сброс выбранной точки — очищаем строку поиска.
+    final hasDestination = _viewModel.selectedDestination != null;
+    if (_wasDestinationSelected && !hasDestination) {
+      if (_searchController.text.isNotEmpty) {
+        _searchController.clear();
+      }
+    }
+    _wasDestinationSelected = hasDestination;
+
     if (mounted) setState(() {});
     _updateMapFromViewModel();
 
@@ -190,10 +203,12 @@ class _MapScreenState extends State<MapScreen> {
           await controller.addSource(
             'weather_source',
             RasterSourceProperties(
-              tiles: [weatherService.getTileUrl(WeatherLayer.values.firstWhere(
-                (l) => l.code == layerCode,
-                orElse: () => WeatherLayer.precipitation,
-              ))],
+              tiles: [
+                weatherService.getTileUrl(WeatherLayer.values.firstWhere(
+                  (l) => l.code == layerCode,
+                  orElse: () => WeatherLayer.precipitation,
+                ))
+              ],
               tileSize: 256,
             ),
           );
@@ -201,9 +216,7 @@ class _MapScreenState extends State<MapScreen> {
           await controller.addLayer(
             'weather_layer',
             'weather_source',
-            RasterLayerProperties(
-              rasterOpacity: 0.6,
-            ),
+            RasterLayerProperties(rasterOpacity: 0.6),
           );
 
           _activeWeatherLayerCode = layerCode;
@@ -268,7 +281,7 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   Future<void> _onStyleLoaded() async {
-    // Загружаем иконку маркера назначения
+    // Иконка маркера назначения
     try {
       final bytes = await rootBundle.load('assets/marker.png');
       await _mapController?.addImage(
@@ -280,7 +293,7 @@ class _MapScreenState extends State<MapScreen> {
       debugPrint('=== ОШИБКА ЗАГРУЗКИ ИКОНКИ: $e');
     }
 
-    // Загружаем иконки категорий
+    // Иконки категорий
     final iconNames = [
       'cafe',
       'shop',
@@ -304,7 +317,7 @@ class _MapScreenState extends State<MapScreen> {
       }
     }
 
-    // Загружаем места из БД
+    // Места из БД
     await _loadPlacesFromDb();
 
     // Центрируем камеру
@@ -335,7 +348,6 @@ class _MapScreenState extends State<MapScreen> {
       final places = await placesService.getAllPlaces();
       debugPrint('=== ЗАГРУЖЕНО МЕСТ ИЗ БД: ${places.length}');
 
-      // Кэшируем список для поиска ближайшего при тапе
       _cachedPlaces = places;
 
       for (final place in places) {
@@ -344,62 +356,85 @@ class _MapScreenState extends State<MapScreen> {
         final name = place['name'] as String? ?? 'Без названия';
         final category = place['category'] as String?;
 
-        await _addPlaceMarker(
-          LatLng(lat, lng),
-          name,
-          category,
-        );
+        await _addPlaceMarker(LatLng(lat, lng), name, category);
       }
     } catch (e) {
       debugPrint('=== ОШИБКА ЗАГРУЗКИ МЕСТ: $e');
     }
   }
 
-  // ============ ТАП ПО КАРТЕ (пустое место) ============
+  // ============ ТАП ПО КАРТЕ ============
 
   Future<void> _onMapClick(dynamic point, LatLng coordinates) async {
     debugPrint(
         '=== ТАП ПО КАРТЕ: ${coordinates.latitude}, ${coordinates.longitude}');
 
-    if (_cachedPlaces.isEmpty) {
-      debugPrint('=== КЭШ ПУСТ');
-      return;
-    }
+    // 1. Если рядом (≤30 м) есть место из БД — открываем боковую панель.
+    if (_cachedPlaces.isNotEmpty) {
+      Map<String, dynamic>? nearest;
+      double nearestDistance = double.infinity;
 
-    Map<String, dynamic>? nearest;
-    double nearestDistance = double.infinity;
+      for (final place in _cachedPlaces) {
+        final lat = (place['lat'] as num).toDouble();
+        final lng = (place['lng'] as num).toDouble();
+        final distance = _distanceBetween(
+          coordinates.latitude,
+          coordinates.longitude,
+          lat,
+          lng,
+        );
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearest = place;
+        }
+      }
 
-    for (final place in _cachedPlaces) {
-      final lat = (place['lat'] as num).toDouble();
-      final lng = (place['lng'] as num).toDouble();
-
-      final distance = _distanceBetween(
-        coordinates.latitude,
-        coordinates.longitude,
-        lat,
-        lng,
-      );
-
-      if (distance < nearestDistance) {
-        nearestDistance = distance;
-        nearest = place;
+      if (nearest != null && nearestDistance <= 30.0) {
+        final rawId = nearest['id'];
+        final id = rawId is int ? rawId : int.tryParse(rawId.toString());
+        if (id != null) {
+          debugPrint('=== ОТКРЫВАЮ ПАНЕЛЬ: ${nearest['name']} (id=$id)');
+          setState(() => _selectedPlaceId = id);
+          return;
+        }
       }
     }
 
-    if (nearest == null || nearestDistance > 30.0) {
-      debugPrint('=== БЛИЖАЙШЕЕ МЕСТО ДАЛЕКО: ${nearestDistance.round()} м');
-      return;
-    }
+    // 2. Иначе — берём адрес через PlaceInfoService
+    //    и ставим точку как пункт назначения (как при поиске).
+    final info = await _placeInfoService.getInfoAt(
+      ll.LatLng(coordinates.latitude, coordinates.longitude),
+    );
 
-    final rawId = nearest['id'];
-    final id = rawId is int ? rawId : int.tryParse(rawId.toString());
-    if (id == null) {
-      debugPrint('=== ID НЕ ПОЛУЧЕН: rawId=$rawId');
-      return;
-    }
+    if (!mounted) return;
 
-    debugPrint('=== ОТКРЫВАЮ ПАНЕЛЬ: ${nearest['name']} (id=$id)');
-    setState(() => _selectedPlaceId = id);
+    final address = info.address.isNotEmpty
+        ? info.address
+        : '${coordinates.latitude.toStringAsFixed(5)}, '
+            '${coordinates.longitude.toStringAsFixed(5)}';
+
+    final place = Place(
+      displayName: address,
+      location: ll.LatLng(coordinates.latitude, coordinates.longitude),
+    );
+
+    // selectPlace очистит searchResults и установит selectedDestination.
+    // _updateMapFromViewModel сам нарисует _destinationSymbol
+    // и покажет панель маршрута снизу.
+    _viewModel.selectPlace(place);
+
+    // Показываем адрес/координаты выбранной точки в строке поиска.
+    _searchController.text = address;
+
+    // Небольшой сдвиг камеры на точку.
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngZoom(
+        LatLng(coordinates.latitude, coordinates.longitude),
+        16.0,
+      ),
+    );
+
+    setState(() {});
   }
 
   // ============ ТАП ПО МАРКЕРУ (Symbol) ============
@@ -485,7 +520,6 @@ class _MapScreenState extends State<MapScreen> {
     final controller = _mapController;
     if (controller == null) return;
 
-    // Выбираем иконку по категории
     String iconName = 'destination-marker';
     if (category != null) {
       final lower = category.toLowerCase();
@@ -536,14 +570,67 @@ class _MapScreenState extends State<MapScreen> {
 
   // ============ ПОИСК ============
 
-  void _performSearch() {
+  Future<void> _performSearch() async {
     FocusScope.of(context).unfocus();
-    _viewModel.search(_searchController.text);
+
+    final query = _searchController.text.trim();
+    if (query.isEmpty) {
+      _viewModel.searchResults = [];
+      setState(() {});
+      return;
+    }
+
+    final lowerQuery = query.toLowerCase();
+
+    // 1. Совпадения в избранном (побуквенно, без учёта регистра).
+    //    Формат: "имя, адрес" — адрес подтянут автоматически.
+    final favoritePlaces = context
+        .read<FavoritesService>()
+        .favorites
+        .where((fav) =>
+            fav.name.toLowerCase().contains(lowerQuery) ||
+            fav.address.toLowerCase().contains(lowerQuery))
+        .map((fav) {
+      final parts = <String>[
+        if (fav.name.trim().isNotEmpty) fav.name.trim(),
+        if (fav.address.trim().isNotEmpty) fav.address.trim(),
+      ];
+      final display = parts.isEmpty ? 'Без названия' : parts.join(', ');
+
+      return Place(
+        displayName: display,
+        location: ll.LatLng(fav.lat, fav.lng),
+      );
+    }).toList();
+
+    // 2. Внешний поиск через API. GeocodingService уже отфильтровал
+    //    по 100 км и отсортировал по возрастанию расстояния — «ближайшие выше».
+    await _viewModel.search(query);
+
+    // 3. Избранное — всегда сверху, без дублей по координатам.
+    final externalResults = _viewModel.searchResults;
+    final merged = [
+      ...favoritePlaces,
+      ...externalResults.where((p) => !favoritePlaces.any(
+            (f) =>
+                (f.location.latitude - p.location.latitude).abs() < 0.0001 &&
+                (f.location.longitude - p.location.longitude).abs() < 0.0001,
+          )),
+    ];
+
+    _viewModel.searchResults = merged;
+    if (mounted) setState(() {});
   }
 
   void _onPlaceSelected(Place place) {
     _viewModel.selectPlace(place);
-    _searchController.text = place.displayName;
+
+    // Если это место из избранного — в строку поиска подставляем только имя.
+    final fav = context.read<FavoritesService>().findByCoordinates(
+          place.location.latitude,
+          place.location.longitude,
+        );
+    _searchController.text = fav?.name ?? place.displayName;
 
     _mapController?.animateCamera(CameraUpdate.newLatLngZoom(
       LatLng(place.location.latitude, place.location.longitude),
@@ -682,9 +769,6 @@ class _MapScreenState extends State<MapScreen> {
             onMapCreated: _onMapCreated,
             onStyleLoadedCallback: _onStyleLoaded,
             onMapClick: _onMapClick,
-            // onSymbolTapped: _onSymbolTapped,  // ← в maplibre_gl 0.27.1
-            //                                     такого параметра у виджета НЕТ,
-            //                                     подписка идёт через controller.onSymbolTapped
             initialCameraPosition: CameraPosition(
               target: LatLng(
                 vm.currentPosition?.latitude ?? 53.3532,
@@ -697,20 +781,31 @@ class _MapScreenState extends State<MapScreen> {
             myLocationTrackingMode: vm.currentPosition != null
                 ? MyLocationTrackingMode.tracking
                 : MyLocationTrackingMode.none,
+
+            // Компас — в левый нижний угол
+            compassEnabled: true,
+            compassViewPosition: CompassViewPosition.bottomLeft,
+            compassViewMargins: const Point(16, 16),
           ),
 
           // Поисковая строка
           if (!vm.isNavigationMode)
             Positioned(
               top: 50,
-              left: 70,
-              right: 16,
+              left: 0,
+              right: 0,
               child: PointerInterceptor(
-                child: Column(
-                  children: [
-                    _buildSearchBar(),
-                    if (vm.searchResults.isNotEmpty) _buildSearchResults(),
-                  ],
+                child: Center(
+                  child: FractionallySizedBox(
+                    widthFactor: 0.5, // ← половина ширины экрана
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildSearchBar(),
+                        if (vm.searchResults.isNotEmpty) _buildSearchResults(),
+                      ],
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -788,11 +883,16 @@ class _MapScreenState extends State<MapScreen> {
           // Панель маршрута
           if (vm.selectedDestination != null)
             Positioned(
-              left: 16,
-              right: 16,
+              left: 0,
+              right: 0,
               bottom: 16,
               child: PointerInterceptor(
-                child: _buildRoutePanel(),
+                child: Center(
+                  child: FractionallySizedBox(
+                    widthFactor: 0.6, // ← ширина: 60% экрана
+                    child: _buildRoutePanel(),
+                  ),
+                ),
               ),
             ),
 
